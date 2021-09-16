@@ -7,22 +7,44 @@ local fn = vim.fn
 local cmd = vim.cmd
 local loop = vim.loop
 local nvim_set_keymap = vim.api.nvim_set_keymap
+local Cfg = {}
 
 local M = {}
 
 local whole_command
 
-local function open_new_runner()
-  loop.spawn('kitty', {
-    args = {'-o', 'allow_remote_control=yes', '--listen-on=' .. Cfg.kitty_port, '--title=' .. Cfg.runner_name}})
-  Cfg.runner_is_open = true
+local function random_kitty_port()
+  local port
+  while true do
+    port = 'unix:/tmp/kitty' .. math.random(10000, 99999)
+    if not Cfg.runner_is_open[port] then
+      break
+    end
+  end
+  return port
 end
 
-local function send_kitty_command(cmd_args, command)
-  local args = {'@', '--to=' .. Cfg.kitty_port}
-  for _, v in pairs(cmd_args) do
-    table.insert(args, v)
+local function fallback_ports(port)
+  if port == '<local>' then
+    port = random_kitty_port()
+    vim.b.kitty_runner_port = port
+    return port
   end
+  return port or vim.b.kitty_runner_port or Cfg.kitty_port
+end
+
+local function open_new_runner(port)
+  port = fallback_ports(port)
+  loop.spawn('kitty', {
+    args = {'-o', 'allow_remote_control=yes', '--listen-on=' .. port, '--title=' .. Cfg.runner_name}})
+  Cfg.runner_is_open[port] = true
+end
+M.open_new_runner = open_new_runner
+
+local function send_kitty_command(cmd_args, command, port)
+  port = fallback_ports(port)
+  local args = {'@', '--to=' .. port}
+  args = vim.list_extend(args, cmd_args)
   table.insert(args, command)
   loop.spawn('kitty', {
     args = args
@@ -40,52 +62,51 @@ local function prepare_command(region)
   return command
 end
 
-function M.run_command(region)
+function M.run_command(region, port)
   whole_command = prepare_command(region)
   -- delete visual selection marks
   vim.cmd([[delm <>]])
-  if Cfg.runner_is_open == true then
-    send_kitty_command(Cfg.run_cmd, whole_command)
-  else
-    open_new_runner()
+  if Cfg.runner_is_open[port] == false then
+    open_new_runner(port)
   end
+  send_kitty_command(Cfg.run_cmd, whole_command, port)
 end
 
-function M.re_run_command()
+function M.re_run_command(port)
   if whole_command then
-    if Cfg.runner_is_open == true then
-      send_kitty_command(Cfg.run_cmd, whole_command)
-    else
-      open_new_runner()
+    if Cfg.runner_is_open[port] == false then
+      open_new_runner(port)
     end
+    send_kitty_command(Cfg.run_cmd, whole_command, port)
   end
 end
 
-function M.prompt_run_command()
+function M.prompt_run_command(port)
   fn.inputsave()
   local command = fn.input("Command: ")
   fn.inputrestore()
   whole_command = command .. '\r'
-  if Cfg.runner_is_open == true then
-    send_kitty_command(Cfg.run_cmd, whole_command)
-  else
-    open_new_runner()
+  if Cfg.runner_is_open[port] == false then
+    open_new_runner(port)
+  end
+  send_kitty_command(Cfg.run_cmd, whole_command, port)
+end
+
+function M.kill_runner(port)
+  if Cfg.runner_is_open[port] == true then
+    send_kitty_command(Cfg.kill_cmd, nil, port)
   end
 end
 
-function M.kill_runner()
-  if Cfg.runner_is_open == true then
-    send_kitty_command(Cfg.kill_cmd, nil)
-  end
-end
-
-function M.clear_runner()
-  if Cfg.runner_is_open == true then
-    send_kitty_command(Cfg.run_cmd, '')
+function M.clear_runner(port)
+  if Cfg.runner_is_open[port] == true then
+    send_kitty_command(Cfg.run_cmd, '', port)
   end
 end
 
 local function define_commands()
+  cmd[[command! KittyOpen lua require('kitty-runner').open_new_runner()]]
+  cmd[[command! KittyOpenLocal lua require('kitty-runner').open_new_runner('<local>')]]
   cmd[[command! KittyReRunCommand lua require('kitty-runner').re_run_command()]]
   cmd[[command! -range KittySendLines lua require('kitty-runner').run_command(vim.region(0, vim.fn.getpos("'<"), vim.fn.getpos("'>"), "l", false)[0])]]
   cmd[[command! KittyRunCommand lua require('kitty-runner').prompt_run_command()]]
@@ -103,7 +124,7 @@ local function define_keymaps()
 end
 
 function M.setup(cfg_)
-  Cfg = cfg_ or {}
+  Cfg = vim.tbl_extend("force", Cfg, cfg_ or {})
   local uuid_handle = io.popen[[uuidgen|sed 's/.*/&/']]
   local uuid = uuid_handle:read("*a")
   uuid_handle:close()
@@ -116,12 +137,12 @@ function M.setup(cfg_)
     Cfg.use_keymaps = true
   end
   math.randomseed(os.time())
-  Cfg.kitty_port = 'unix:/tmp/kitty' .. math.random(10000, 99999)
+  Cfg.kitty_port = random_kitty_port()
   define_commands()
   if Cfg.use_keymaps == true then
     define_keymaps()
   end
-  Cfg.runner_is_open = false
+  Cfg.runner_is_open = {}
 end
 
 return M

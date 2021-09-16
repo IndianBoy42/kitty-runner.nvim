@@ -19,6 +19,7 @@ local function random_kitty_port()
   local port
   while true do
     port = 'unix:/tmp/kitty' .. math.random(10000, 99999)
+    -- TODO: check if that file exists?
     if not Cfg.runner_is_open[port] then
       break
     end

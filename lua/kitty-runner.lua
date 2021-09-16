@@ -7,7 +7,9 @@ local fn = vim.fn
 local cmd = vim.cmd
 local loop = vim.loop
 local nvim_set_keymap = vim.api.nvim_set_keymap
-local Cfg = {}
+local Cfg = {
+  runner_is_open = {}
+}
 
 local M = {}
 
@@ -142,7 +144,6 @@ function M.setup(cfg_)
   if Cfg.use_keymaps == true then
     define_keymaps()
   end
-  Cfg.runner_is_open = {}
 end
 
 return M

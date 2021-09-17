@@ -12,7 +12,7 @@ local Cfg = {
 
 local M = {}
 
-local whole_command
+local remember_command = {}
 
 local function random_kitty_port()
 	local port
@@ -31,6 +31,12 @@ local function fallback_ports(port)
 		port = random_kitty_port()
 		vim.b.kitty_runner_port = port
 		return port
+	end
+	if tonumber(port) ~= nil then
+		return "unix:/tmp/kitty" .. port
+	end
+	if "" == port then
+		port = nil
 	end
 	return port or vim.b.kitty_runner_port or Cfg.kitty_port
 end
@@ -70,37 +76,43 @@ local function prepare_command(region)
 	return command
 end
 
-function M.run_command(region, port)
+function M.run_command(region, port, dontrem)
 	port = fallback_ports(port)
-	whole_command = prepare_command(region)
+	full_command = prepare_command(region)
+	if not dontrem then
+		remember_command[port] = full_command
+	end
 	-- delete visual selection marks
 	vim.cmd([[delm <>]])
 	if not Cfg.runner_is_open[port] then
 		open_new_runner(port)
 	end
-	send_kitty_command(Cfg.run_cmd, whole_command, port)
+	send_kitty_command(Cfg.run_cmd, full_command, port)
 end
 
 function M.re_run_command(port)
 	port = fallback_ports(port)
-	if whole_command then
+	if remember_command[port] then
 		if not Cfg.runner_is_open[port] then
 			open_new_runner(port)
 		end
-		send_kitty_command(Cfg.run_cmd, whole_command, port)
+		send_kitty_command(Cfg.run_cmd, full_command, port)
 	end
 end
 
-function M.prompt_run_command(port)
+function M.prompt_run_command(port, dontrem)
 	port = fallback_ports(port)
 	fn.inputsave()
 	local command = fn.input("Command: ")
 	fn.inputrestore()
-	whole_command = command .. "\r"
+	full_command = command .. "\r"
+	if not dontrem then
+		remember_command[port] = full_command
+	end
 	if not Cfg.runner_is_open[port] then
 		open_new_runner(port)
 	end
-	send_kitty_command(Cfg.run_cmd, whole_command, port)
+	send_kitty_command(Cfg.run_cmd, full_command, port)
 end
 
 function M.kill_runner(port)
@@ -118,15 +130,19 @@ function M.clear_runner(port)
 end
 
 local function define_commands()
-	cmd([[command! -nargs=? KittyOpen lua require('kitty-runner').open_new_runner(<args>)]])
+	cmd([[command! -nargs=? KittyOpen lua require('kitty-runner').open_new_runner('<args>')]])
 	cmd([[command! KittyOpenLocal lua require('kitty-runner').open_new_runner('<local>')]])
-	cmd([[command! -nargs=? KittyReRunCommand lua require('kitty-runner').re_run_command(<args>)]])
+	cmd([[command! -nargs=? KittyReRunCommand lua require('kitty-runner').re_run_command('<args>')]])
 	cmd(
-		[[command! -nargs=? -range KittySendLines lua require('kitty-runner').run_command(vim.region(0, vim.fn.getpos("'<"), vim.fn.getpos("'>"), "l", false)[0], <args>)]]
+		[[command! -nargs=? -range KittySendLines lua require('kitty-runner').run_command(vim.region(0, vim.fn.getpos("'<"), vim.fn.getpos("'>"), "l", false)[0], '<args>')]]
 	)
-	cmd([[command! -nargs=? KittyRunCommand lua require('kitty-runner').prompt_run_command(<args>)]])
-	cmd([[command! -nargs=? KittyClearRunner lua require('kitty-runner').clear_runner(<args>)]])
-	cmd([[command! -nargs=? KittyKillRunner lua require('kitty-runner').kill_runner(<args>)]])
+	cmd(
+		[[command! -nargs=? -range KittySendLinesOnce lua require('kitty-runner').run_command(vim.region(0, vim.fn.getpos("'<"), vim.fn.getpos("'>"), "l", false)[0], '<args>', false)]]
+	)
+	cmd([[command! -nargs=? KittyRunCommand lua require('kitty-runner').prompt_run_command('<args>')]])
+	cmd([[command! -nargs=? KittyRunCommandOnce lua require('kitty-runner').prompt_run_command('<args>', false)]])
+	cmd([[command! -nargs=? KittyClearRunner lua require('kitty-runner').clear_runner('<args>')]])
+	cmd([[command! -nargs=? KittyKillRunner lua require('kitty-runner').kill_runner('<args>')]])
 end
 
 local function define_keymaps()
